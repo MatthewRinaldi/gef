@@ -9693,6 +9693,43 @@ class SyscallArgsCommand(GenericCommand):
         path = os.path.realpath(path)
         return path if os.path.isdir(path) else None
 
+@register_command
+class MagicCommand(GenericCommand):
+    """
+    Prints out useful variables or functions in glibc. (Idea from pwngdb)
+    """
+    _cmdline_ = "magic"
+    _syntax_ = _cmdline_
+
+    def do_invoke(self, argv):
+        magic_variable = ["__malloc_hook","__free_hook","__realloc_hook","stdin","stdout","_IO_list_all","__after_morecore_hook"]
+        magic_function = ["system","execve","open","read","write","gets","setcontext+0x35"]
+        gef_print("===== functions =====")
+        for mf in magic_function:
+            offset = hex(MagicCommand.get_offset(mf))
+            gef_print(f"{mf} ({offset})")
+        gef_print("===== variables =====")
+        for mv in magic_variable:
+            if current_arch.ptrsize == 8:
+                word = "gx "
+            else:
+                word = "wx "
+            cmd = "x/" + word + "&" + mv
+            content = gdb.execute(cmd, to_string=True).split(':')[1].strip()
+            offset = hex(MagicCommand.get_offset(mv))
+            gef_print(f"{mv} ({offset})".ljust(36) + f": {content}")
+
+    def get_offset(sym):
+        libc = LibcBaseFunction.libc_base()
+        try:
+            cmd = "x &" + sym
+            sym_addr = int(gdb.execute(cmd, to_string=True).split()[0], 16)
+            return sym_addr - libc if sym_addr - libc > 0 else 0
+        except Exception as e:
+            print(e)
+            raise gdb.GdbError("Invalid symbol")
+
+
 
 @lru_cache()
 def get_section_base_address(name):
@@ -9789,6 +9826,21 @@ class SectionBaseFunction(GenericFunction):
             err("Cannot find section {}".format(name))
             return 0
         return addr
+
+@register_function
+class LibcBaseFunction(GenericFunction):
+    """"Return the libc base address plus an optional offset"""
+    _function_ = "_libc"
+
+    def do_invoke(self, args):
+        base = LibcBaseFunction.libc_base()
+        if not base:
+            raise gdb.GdbError("Libc not found")
+        return self.arg_to_long(args,0) + base
+
+    @staticmethod
+    def libc_base():
+        return get_section_base_address("libc")
 
 @register_function
 class BssBaseFunction(GenericFunction):
